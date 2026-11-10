@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --local --port 8787",
     "deploy": "wrangler deploy",
-    "test": "node smoke.mjs"
+    "test": "node test/smoke.mjs"
   },
   "devDependencies": {
     "wrangler": "^4",
