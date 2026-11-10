@@ -1,0 +1,6 @@
+{
+  "name": "phonebridge",
+  "version": "0.2.0",
+  "description": "Control your own Android phone through the PhoneBridge MCP server, with explicit on-phone approval for every session.",
+  "author": { "name": "Kira" }
+}

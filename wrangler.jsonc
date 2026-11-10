@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "phonebridge-mcp",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true,
+
+  // Keep variables you already set in the dashboard; secrets are never touched by deploys.
+  "keep_vars": true,
+
+  "durable_objects": {
+    "bindings": [{ "name": "HUB", "class_name": "Hub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }],
+
+  "vars": {
+    // Comma-separated browser origins allowed to call /mcp. Empty = no browser origins.
+    "ALLOWED_ORIGINS": "https://claude.ai,https://chatgpt.com",
+    // Commands the terminal tool may run (first word only, no shell metacharacters).
+    "TERMINAL_ALLOWLIST": "uname,uptime,date,df,whoami,pwd,free,ls"
+  },
+
+  "observability": { "enabled": true }
+}

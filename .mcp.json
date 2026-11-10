@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "phonebridge": {
+      "type": "http",
+      "url": "https://phonebridge-mcp.ikira0x0.workers.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer ${PHONEBRIDGE_MCP_TOKEN}"
+      }
+    }
+  }
+}
