@@ -27,7 +27,7 @@ export default {
     }
 
     if (path === "/health" && request.method === "GET") {
-      return json({ service: "PhoneBridge MCP", status: "online", version: "0.2.0" }, 200, cors);
+      return json({ service: "PhoneBridge MCP", status: "online", version: "0.3.0" }, 200, cors);
     }
 
     const hub = env.HUB.get(env.HUB.idFromName("main"));

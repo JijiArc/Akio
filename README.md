@@ -5,7 +5,7 @@ Cloudflare Worker + Durable Object that lets Claude control your own Android pho
 ```
 src/      Worker, Durable Object, MCP server, Xirsys ICE
 test/     smoke test (simulated phone)
-docs/     DEPLOY.md, SECURITY.md, TEST-REPORT.md
+docs/     DEPLOY.md, PROTOCOL.md (phone contract), SECURITY.md, TEST-REPORT.md
 plugin/   Claude plugin (MCP config + skill)
 ```
 
