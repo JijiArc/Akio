@@ -20,5 +20,6 @@
     "TERMINAL_ALLOWLIST": "uname,uptime,date,df,whoami,pwd,free,ls"
   },
 
-  "observability": { "enabled": true }
+  // Invocation logs record "<METHOD> <URL>", which would contain the token for the /mcp/<token> form.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } }
 }

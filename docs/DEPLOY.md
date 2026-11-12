@@ -44,5 +44,5 @@ ChatGPT: same URL options; use whichever auth method its connector screen offers
 
 ## What is and is not built
 - Built and tested locally: everything in the Worker (see `docs/TEST-REPORT.md`).
-- Not built yet: the Android app. Device tools (`phone_tap`, `phone_screen_capture`, ...) are defined and relayed, but they only appear in the tool list after a phone reports the capability.
-- Design note: the Worker cannot be a WebRTC peer. Commands travel over the authenticated signaling WebSocket through the Durable Object. `/device/ice` hands the phone Xirsys ICE servers for a later direct WebRTC channel (screen streaming to a viewer page).
+- Not built yet: the Android app. Device tools (`phone_ui_tree`, `phone_tap`, `phone_shell_exec`, ...) are defined and relayed and are always listed; each fails with `capability_unavailable` until the phone reports that capability. The phone-side contract is in `docs/PROTOCOL.md`.
+- Design note: the Worker cannot be a WebRTC peer. Commands travel over the authenticated WebSocket through the Durable Object. `/device/ice` hands the phone Xirsys ICE servers and is kept for a later direct channel. Invocation logs are off (`wrangler.jsonc`) because the `/mcp/<token>` form would put the token in them; prefer the Authorization header.
