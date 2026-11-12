@@ -1,8 +1,16 @@
-# PhoneBridge Android app: build brief (prompt for the coding session)
+# PhoneBridge Android app: build brief
 
-Paste or reference this file at the start of the session that builds the app. The phone-side wire contract is
-`docs/PROTOCOL.md`; tool parameter schemas are in `src/tools.js`. If this brief and those files disagree, the files win and the
-brief gets fixed.
+This file is the standing instruction for the session that builds the Android app. In the app repo it is saved as `CLAUDE.md`
+(read automatically each session). The app lives in **its own repository**; the backend lives in the private repo `JijiArc/Akio`
+(Cloudflare Worker + Durable Object, version 0.3.0, deployed at `https://phonebridge-mcp.ikira0x0.workers.dev`).
+
+## 0. Sources of truth
+- **`docs/PROTOCOL.md`** (copied into this repo, original in `JijiArc/Akio`): the phone <-> backend wire contract. If it is missing here, stop and ask for it.
+- **Tool parameter schemas**: `src/tools.js` in `JijiArc/Akio`. Ask for a copy of the relevant tool entries if you need exact fields; do not guess parameter names.
+- If this brief and those files disagree, the backend files win. Report the disagreement instead of silently picking one.
+- Never change the backend from here. Protocol changes are requested from the backend repo's session.
+- Backend endpoints used by the app: `POST /device/pair`, `GET wss://<host>/device/ws` (device token as Bearer), `POST /device/rotate`. `/device/ice` exists (Xirsys) but is not used yet.
+- Repo layout suggestion: `app/` (Kotlin module), `docs/PROTOCOL.md`, `docs/TESTING.md` (device test log), `CLAUDE.md` (this file).
 
 ## 1. Goal
 An Android app that lets Claude run this phone like an MDM-managed device, through the PhoneBridge Cloudflare backend:
@@ -101,3 +109,10 @@ Do not run two UI-acting commands concurrently; queue them in order.
 - Emergency stop ends the session within 1 s and the backend shows it ended.
 - Overnight idle test: the connection survives Doze/realme background killing, or the failure is recorded with the settings that were tried.
 - Report separately what was verified on the device and what was only unit-tested or assumed. Do not claim an action works unless a tool result or log shows it.
+
+## 10. Working agreements for this repo
+- Commit small, on branches; open PRs; do not merge your own PRs unless the owner says so.
+- Keep a device test log in `docs/TESTING.md`: date, step, result, what was seen on the phone. Failures stay in the log.
+- Never commit tokens, pairing codes, keystores or signing keys. Debug builds only until the owner asks for a release build.
+- Ask the owner before anything that touches the phone's data: Device Owner provisioning, account removal, `wipe`, `app_uninstall`.
+- When something cannot be verified on the device from the session, say so plainly in the report instead of implying it works.
