@@ -67,17 +67,30 @@ export class Hub extends DurableObject {
     await this.ctx.storage.put("audit", log);
   }
 
-  /** Socket present AND heard from recently. Pings answered by the runtime count (auto-response timestamp). */
-  async #online(id, dev) {
-    const sockets = this.ctx.getWebSockets("dev:" + id);
-    if (sockets.length === 0) return false;
-    const d = dev || (await this.ctx.storage.get("dev:" + id));
+  /**
+   * Last time anything was heard from the device (ms since epoch, 0 = never): the newest of the stored
+   * last_seen (connect / hello / heartbeat / response / ack / session_decision) and the runtime's
+   * ping auto-response timestamps. Pings never wake the Hub, so they are only visible via the latter.
+   */
+  #lastSeen(id, d) {
     let seen = d?.last_seen || 0;
-    for (const ws of sockets) {
+    for (const ws of this.ctx.getWebSockets("dev:" + id)) {
       const t = this.ctx.getWebSocketAutoResponseTimestamp(ws);
       if (t) seen = Math.max(seen, t.getTime());
     }
-    return Date.now() - seen < ONLINE_WINDOW_MS;
+    return seen;
+  }
+
+  /** Socket present AND heard from recently. Pings answered by the runtime count (auto-response timestamp). */
+  async #online(id, dev) {
+    if (this.ctx.getWebSockets("dev:" + id).length === 0) return false;
+    const d = dev || (await this.ctx.storage.get("dev:" + id));
+    return Date.now() - this.#lastSeen(id, d) < ONLINE_WINDOW_MS;
+  }
+
+  /** Remember that the device just spoke. Cheap enough for ack / response / decision frames. */
+  async #touch(id, now = Date.now()) {
+    await this.#patchDevice(id, { last_seen: now });
   }
 
   #frameError(ws, code, message, extra = {}) {
@@ -206,24 +219,33 @@ export class Hub extends DurableObject {
       return err("invalid_or_expired_code", "Pairing code is invalid or expired.");
     }
     await this.ctx.storage.delete(key);
-    const id = crypto.randomUUID();
     const token = randomToken(32);
     const th = await sha256Hex(token);
+    // Optional, additive field: a stable per-install id from the app. Re-pairing the same install replaces its
+    // old record (same device_id, new token) instead of stacking a new entry every time.
+    const iid = typeof info.install_id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(info.install_id) ? info.install_id : "";
+    const existing = iid ? (await this.#devices()).find((d) => d.install_id === iid) : null;
+    const id = existing ? existing.id : crypto.randomUUID();
+    if (existing) {
+      await this.#dropDevice(existing, false, "repaired"); // old sockets and sessions end; the old token stops working below
+      await this.ctx.storage.delete("tok:" + existing.token_hash);
+    }
     await this.ctx.storage.put("dev:" + id, {
       id,
       name: clip(info.name, 60) || "Android phone",
       model: clip(info.model, 60),
       android_version: clip(info.android_version, 20),
       app_version: clip(info.app_version, 20),
+      install_id: iid || undefined,
       token_hash: th,
       caps: [],
       battery: null,
       network: null,
-      created: now,
+      created: existing ? existing.created : now,
       last_seen: 0,
     });
     await this.ctx.storage.put("tok:" + th, id);
-    await this.#audit("device_paired", { device_id: id });
+    await this.#audit(existing ? "device_repaired" : "device_paired", { device_id: id });
     return { ok: true, device_id: id, device_token: token };
   }
 
@@ -274,6 +296,9 @@ export class Hub extends DurableObject {
     try { m = JSON.parse(message); } catch { return this.#frameError(ws, "bad_json", "Frame is not valid JSON."); }
     if (!m || typeof m.type !== "string") return this.#frameError(ws, "bad_frame", "Frame needs a string \"type\".");
     const now = Date.now();
+
+    // PROTOCOL.md: "something (ping or any frame) was heard" keeps the device online. hello and heartbeat write last_seen themselves.
+    if (m.type !== "hello" && m.type !== "heartbeat") await this.#touch(id, now);
 
     switch (m.type) {
       case "hello": {
@@ -411,6 +436,7 @@ export class Hub extends DurableObject {
     const out = [];
     for (const d of await this.#devices()) {
       const live = await this.#liveSessions(d.id);
+      const seen = this.#lastSeen(d.id, d);
       out.push({
         device_id: d.id,
         name: d.name,
@@ -419,7 +445,7 @@ export class Hub extends DurableObject {
         app_version: d.app_version,
         online: await this.#online(d.id, d),
         websocket_present: this.ctx.getWebSockets("dev:" + d.id).length > 0,
-        last_seen_age_s: d.last_seen ? Math.round((now - d.last_seen) / 1000) : null,
+        last_seen_age_s: seen ? Math.round((now - seen) / 1000) : null,
         queued_commands: this.sql.exec("SELECT COUNT(*) AS n FROM commands WHERE device_id = ? AND state IN ('queued','sent')", d.id).one().n,
         capabilities: d.caps,
         battery: d.battery,
@@ -479,7 +505,9 @@ export class Hub extends DurableObject {
       ]);
       this.waiters.delete(s.id);
     }
-    return { ok: true, ...this.#view(await this.ctx.storage.get("sess:" + s.id)), note: "The owner must approve this on the phone." };
+    const view = this.#view(await this.ctx.storage.get("sess:" + s.id));
+    // The note only applies while the phone has not decided yet; an approved/denied/expired session must not claim otherwise.
+    return { ok: true, ...view, ...(view.status === "pending" ? { note: "The owner must approve this on the phone." } : {}) };
   }
 
   async sessionStatus(id) {
@@ -496,11 +524,9 @@ export class Hub extends DurableObject {
     return { ok: true, ...this.#view(await this.ctx.storage.get("sess:" + id)) };
   }
 
-  async disconnectDevice({ device_id, revoke = false }) {
-    const p = await this.#pickDevice(device_id);
-    if (!p.ok) return p;
-    const d = p.device;
-    for (const s of await this.#liveSessions(d.id)) await this.#finish(s, "ended", "disconnect");
+  /** End the device's sessions, close its sockets and (when revoking) delete the record and token. */
+  async #dropDevice(d, revoke, reason) {
+    for (const s of await this.#liveSessions(d.id)) await this.#finish(s, "ended", reason);
     for (const ws of this.ctx.getWebSockets("dev:" + d.id)) {
       try { ws.close(1000, revoke ? "revoked" : "disconnect"); } catch { /* ignore */ }
     }
@@ -508,8 +534,48 @@ export class Hub extends DurableObject {
       await this.ctx.storage.delete("tok:" + d.token_hash);
       await this.ctx.storage.delete("dev:" + d.id);
     }
+  }
+
+  async disconnectDevice({ device_id, revoke = false }) {
+    const p = await this.#pickDevice(device_id);
+    if (!p.ok) return p;
+    const d = p.device;
+    await this.#dropDevice(d, revoke, "disconnect");
     await this.#audit(revoke ? "device_revoked" : "device_disconnected_by_assistant", { device_id: d.id });
     return { ok: true, device_id: d.id, revoked: !!revoke };
+  }
+
+  /**
+   * Remove stale pairings in one call. A device is stale when it has no socket, has no live session and has not been
+   * heard from for `offline_for_hours`. Never touches an online device or `keep_device_id`. dry_run (default) only lists.
+   */
+  async pruneDevices({ offline_for_hours = 24, keep_device_id, dry_run = true } = {}) {
+    const now = Date.now();
+    const cutoff = offline_for_hours * 3600 * 1000;
+    const candidates = [];
+    const kept = [];
+    for (const d of await this.#devices()) {
+      const seen = this.#lastSeen(d.id, d);
+      const age_s = seen ? Math.round((now - seen) / 1000) : null;
+      const row = { device_id: d.id, name: d.name, model: d.model, app_version: d.app_version, last_seen_age_s: age_s };
+      const online = await this.#online(d.id, d);
+      const hasSocket = this.ctx.getWebSockets("dev:" + d.id).length > 0;
+      const live = (await this.#liveSessions(d.id)).length > 0;
+      // A device that never connected counts from when it was paired, so a phone being paired right now is not pruned.
+      const reference = Math.max(seen, d.created || 0);
+      const stale = !online && !hasSocket && !live && now - reference >= cutoff;
+      if (d.id === keep_device_id || !stale) kept.push({ ...row, reason: d.id === keep_device_id ? "keep_device_id" : online || hasSocket ? "connected" : live ? "live_session" : "recent_activity" });
+      else candidates.push(row);
+    }
+    if (!dry_run) {
+      for (const row of candidates) {
+        const d = await this.ctx.storage.get("dev:" + row.device_id);
+        if (!d) continue;
+        await this.#dropDevice(d, true, "pruned");
+        await this.#audit("device_revoked", { device_id: d.id, reason: "pruned" });
+      }
+    }
+    return { ok: true, dry_run: !!dry_run, offline_for_hours, pruned: dry_run ? [] : candidates, would_prune: dry_run ? candidates : [], kept };
   }
 
   // ---------------- command relay ----------------

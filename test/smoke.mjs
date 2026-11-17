@@ -1,6 +1,7 @@
 // Smoke test against a locally running worker (npm run dev). Uses a SIMULATED phone
 // (a Node WebSocket client) because the Android app does not exist yet.
 import WebSocket from "ws";
+import { readFileSync } from "node:fs";
 
 const BASE = process.env.BASE || "http://127.0.0.1:8787";
 const TOKEN = process.env.TOKEN || "test-token-test-token-test-token-1234";
@@ -241,6 +242,59 @@ ok(c.data.events.some((e) => e.e === "device_paired") && !JSON.stringify(c.data)
 r = await fetch(`${BASE}/device/rotate`, { method: "POST", headers: { Authorization: `Bearer ${DT}` } });
 const rot = await r.json(); ok(r.status === 200 && rot.device_token && rot.device_token !== DT, "device token rotation");
 r = await fetch(`${BASE}/device/ice`, { headers: { Authorization: `Bearer ${DT}` } }); ok(r.status === 401, "old device token invalid after rotation");
+
+// --- 0.3.1: liveness reporting, session note, duplicate pairings, version consistency ---
+c = await call("phone_status"); const MAIN_ID = c.data.devices[0].device_id;
+await sleep(2500); ws.send("ping"); await sleep(300);
+c = await call("phone_status");
+ok(c.data.devices[0].online === true && c.data.devices[0].last_seen_age_s <= 1, "last_seen_age_s reflects a ping (runtime auto-response)", JSON.stringify(c.data.devices[0]));
+await sleep(2500); ws.send(JSON.stringify({ type: "ack", id: "00000000-0000-0000-0000-000000000000" })); await sleep(300);
+c = await call("phone_status"); ok(c.data.devices[0].last_seen_age_s <= 1, "any device frame (ack) refreshes last_seen_age_s", JSON.stringify(c.data.devices[0]));
+
+const nP = call("phone_start_session", { reason: "note test", level: "observe", wait_seconds: 5 });
+await sleep(400);
+const reqN = inbox.filter((m) => m.type === "session_request").pop();
+ws.send(JSON.stringify({ type: "session_decision", session_id: reqN.session_id, approved: true }));
+c = await nP; ok(c.data.status === "active" && c.data.note === undefined, "approved session is reported active without the 'owner must approve' note", JSON.stringify(c.data));
+await call("phone_end_session", { session_id: reqN.session_id });
+c = await call("phone_start_session", { reason: "pending note", level: "observe" });
+ok(c.data.status === "pending" && /approve/i.test(c.data.note || ""), "undecided session is pending and carries the note", JSON.stringify(c.data));
+await call("phone_end_session", { session_id: c.data.session_id });
+
+const pairWith = async (extra) => {
+  const cc = await call("phone_create_pairing_code");
+  const rr = await fetch(`${BASE}/device/pair`, { method: "POST", body: JSON.stringify({ code: cc.data.code, name: "Dup phone", model: "SIM", android_version: "10", ...extra }) });
+  return rr.json();
+};
+const a1 = await pairWith({ install_id: "install-aaaaaaaa" });
+const a2 = await pairWith({ install_id: "install-aaaaaaaa" });
+ok(a1.device_id && a1.device_id === a2.device_id && a1.device_token !== a2.device_token, "re-pairing the same install_id reuses the device entry");
+r = await fetch(`${BASE}/device/ice`, { headers: { Authorization: `Bearer ${a1.device_token}` } }); ok(r.status === 401, "token from before the re-pair stops working");
+r = await fetch(`${BASE}/device/ice`, { headers: { Authorization: `Bearer ${a2.device_token}` } }); ok(r.status !== 401, "token from the re-pair works");
+const b1 = await pairWith({}); const b2 = await pairWith({ install_id: "short" }); const b3 = await pairWith({ install_id: "short" });
+ok(new Set([b1.device_id, b2.device_id, b3.device_id, a1.device_id]).size === 4, "no install_id (or an invalid one) never merges devices");
+c = await call("phone_status"); ok(c.data.paired_count === 5, "one entry per install_id plus the ones without", String(c.data.paired_count));
+
+c = await call("phone_connection_status"); ok(c.isError && c.data.error.code === "device_ambiguous" && c.data.error.device_ids.length === 5, "connection_status with several devices asks for device_id");
+c = await call("phone_connection_status", { device_id: MAIN_ID }); ok(c.data.ok && c.data.device.device_id === MAIN_ID, "connection_status with device_id works");
+c = await call("phone_disconnect", { revoke: true }); ok(c.isError && c.data.error.code === "device_ambiguous", "disconnect without device_id is refused when several are paired");
+
+c = await call("phone_prune_devices", { offline_for_hours: 24 });
+ok(c.data.ok && c.data.dry_run === true && c.data.would_prune.length === 0 && c.data.kept.length === 5, "prune keeps recently paired devices (24 h)", JSON.stringify(c.data));
+c = await call("phone_prune_devices", { offline_for_hours: 0 });
+ok(c.data.dry_run === true && c.data.would_prune.length === 4 && !c.data.would_prune.some((d) => d.device_id === MAIN_ID) && c.data.pruned.length === 0, "dry run lists offline devices, never the connected one, removes nothing", JSON.stringify(c.data));
+c = await call("phone_status"); ok(c.data.paired_count === 5, "dry run changed nothing");
+c = await call("phone_prune_devices", { offline_for_hours: 0, dry_run: false });
+ok(c.data.pruned.length === 4 && !c.data.pruned.some((d) => d.device_id === MAIN_ID), "prune removes the offline devices", JSON.stringify(c.data));
+c = await call("phone_status"); ok(c.data.paired_count === 1 && c.data.devices[0].device_id === MAIN_ID && c.data.devices[0].online === true, "only the connected device is left");
+r = await fetch(`${BASE}/device/ice`, { headers: { Authorization: `Bearer ${a2.device_token}` } }); ok(r.status === 401, "pruned device token is revoked");
+
+const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
+const plug = JSON.parse(readFileSync(new URL("../plugin/.claude-plugin/plugin.json", import.meta.url)));
+const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url)));
+const health = await (await fetch(`${BASE}/health`)).json();
+x = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
+ok([plug.version, lock.version, lock.packages[""].version, health.version, x.body.result.serverInfo.version].every((v) => v === pkg.version), "version is the same in package.json, lockfile, plugin, /health and serverInfo", [pkg.version, plug.version, lock.version, health.version].join());
 
 // disconnect + revoke
 c = await call("phone_disconnect", { revoke: true }); ok(c.data.ok && c.data.revoked, "disconnect with revoke");

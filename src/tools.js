@@ -70,7 +70,7 @@ export const TOOLS = [
   {
     name: "phone_start_session",
     cap: null,
-    description: "Ask the phone's owner for permission to control the device. The session stays pending until the owner approves it ON THE PHONE; there is no way to approve it from here. `level` is what the owner is asked to grant: observe (read-only tools), operate (also taps, typing, opening apps), admin (also shell, app installs, permissions, restrictions, wipe). Optionally wait up to 25s for the decision.",
+    description: "Ask the phone's owner for permission to control the device. The session stays pending until the owner approves it ON THE PHONE; there is no way to approve it from here. `level` is what the owner is asked to grant: observe (read-only tools), operate (also taps, typing, opening apps), admin (also shell, app installs, permissions, restrictions, wipe). Optionally wait up to 25s for the decision: the returned status is pending until the phone decides, then active (approved) or denied; a `note` appears only while it is still pending.",
     inputSchema: S({
       device_id: { type: "string", maxLength: 64 },
       reason: { type: "string", minLength: 3, maxLength: 200, description: "Shown to the phone owner on the approval prompt." },
@@ -102,6 +102,16 @@ export const TOOLS = [
     cap: null,
     description: "End every live session for a device and close its connection. With revoke=true the device is also unpaired and its token destroyed (it must be paired again).",
     inputSchema: S({ device_id: { type: "string", maxLength: 64 }, revoke: { type: "boolean" } }),
+  },
+  {
+    name: "phone_prune_devices",
+    cap: null,
+    description: "Remove stale pairings in one call: devices with no socket, no live session and no contact for offline_for_hours (default 24; 0 = every offline device). Never touches a connected device or keep_device_id. dry_run defaults to TRUE and only lists what would be removed; pass dry_run=false to revoke them (they must be paired again).",
+    inputSchema: S({
+      offline_for_hours: int(0, 8760, "Default 24."),
+      keep_device_id: { type: "string", maxLength: 64, description: "Never prune this device." },
+      dry_run: { type: "boolean", description: "Default true." },
+    }),
   },
   {
     name: "phone_audit_log",

@@ -2,6 +2,7 @@ import { Hub } from "./hub.js";
 import { handleRpc } from "./mcp.js";
 import { getIceServers } from "./xirsys.js";
 import { safeEqual, bearer, corsHeaders, allowedOrigins, json } from "./util.js";
+import { VERSION } from "./version.js";
 
 export { Hub };
 
@@ -27,7 +28,7 @@ export default {
     }
 
     if (path === "/health" && request.method === "GET") {
-      return json({ service: "PhoneBridge MCP", status: "online", version: "0.3.0" }, 200, cors);
+      return json({ service: "PhoneBridge MCP", status: "online", version: VERSION }, 200, cors);
     }
 
     const hub = env.HUB.get(env.HUB.idFromName("main"));

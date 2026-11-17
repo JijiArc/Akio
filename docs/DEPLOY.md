@@ -32,7 +32,7 @@ If your existing names differ, add a plain **variable** (not secret) `XIRSYS_BIN
 Check it: once a phone is paired, `phone_connection_status` reports which logical fields were found and which secret **names** matched.
 
 ## 4. Verify
-- Open `https://phonebridge-mcp.ikira0x0.workers.dev/health` → `{"status":"online","version":"0.2.0"}`.
+- Open `https://phonebridge-mcp.ikira0x0.workers.dev/health` → `{"status":"online","version":"0.3.1"}`.
 - Connect Claude (below), call `phone_status`. Before the Android app exists it truthfully reports no paired devices.
 
 ## 5. Connect Claude
