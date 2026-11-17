@@ -1,8 +1,9 @@
 import { TOOLS, validate } from "./tools.js";
 import { xirsysStatus } from "./xirsys.js";
+import { VERSION } from "./version.js";
 
 const VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
-const SERVER = { name: "PhoneBridge", version: "0.3.0" };
+const SERVER = { name: "PhoneBridge", version: VERSION };
 
 const rpcOk = (id, result) => ({ jsonrpc: "2.0", id, result });
 const rpcErr = (id, code, message) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
@@ -53,7 +54,11 @@ async function one(msg, c) {
           inputSchema: t.inputSchema,
           annotations: t.cap
             ? { readOnlyHint: t.risk === "read", destructiveHint: t.risk === "destructive", idempotentHint: !!t.idempotent, openWorldHint: false }
-            : { readOnlyHint: ["phone_status", "phone_connection_status", "phone_session_status", "phone_command_status", "phone_audit_log"].includes(t.name), openWorldHint: false },
+            : {
+                readOnlyHint: ["phone_status", "phone_connection_status", "phone_session_status", "phone_command_status", "phone_audit_log"].includes(t.name),
+                destructiveHint: ["phone_disconnect", "phone_prune_devices"].includes(t.name),
+                openWorldHint: false,
+              },
         }));
         return rpcOk(id, { tools });
       }
@@ -91,6 +96,9 @@ async function callTool(id, params, c) {
       return toolOut(id, await hub.status());
     case "phone_connection_status": {
       const st = await hub.status();
+      if (!args.device_id && st.devices.length > 1) {
+        return toolOut(id, { ok: false, error: { code: "device_ambiguous", message: "Several devices are paired; pass device_id.", device_ids: st.devices.map((d) => d.device_id) } });
+      }
       const dev = args.device_id ? st.devices.find((d) => d.device_id === args.device_id) : st.devices[0];
       if (!dev) return toolOut(id, { ok: false, error: { code: "no_device_paired", message: "No matching paired device." } });
       return toolOut(id, { ok: true, device: dev, xirsys: xirsysStatus(c.env), transport: "websocket-signaling-via-durable-object" });
@@ -107,6 +115,8 @@ async function callTool(id, params, c) {
       return toolOut(id, await hub.endSession(args.session_id));
     case "phone_disconnect":
       return toolOut(id, await hub.disconnectDevice(args));
+    case "phone_prune_devices":
+      return toolOut(id, await hub.pruneDevices(args));
     case "phone_audit_log":
       return toolOut(id, await hub.auditLog(args.limit ?? 25));
   }

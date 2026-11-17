@@ -8,8 +8,14 @@ Frames are **JSON text**. Binary frames and frames over 1,000,000 characters are
 - Send the literal text frame `ping` every **25 s**. The runtime answers `pong` without waking the Hub or writing storage.
 - The device counts as **online** only if a socket exists **and** something (ping or any frame) was heard within **90 s**.
   A silent carrier drop therefore becomes "offline" within 90 s even though the socket still looks open.
+- `last_seen_age_s` (in `phone_status` / `phone_connection_status`) is the time since the newest of: a ping, or any frame the device sent.
 - On socket close the phone reconnects with exponential backoff and jitter (1 s, 2 s, 4 s ... cap 60 s), then sends `hello` again.
 - A new connection for the same device replaces the old one (old gets close code 4000).
+
+## Pairing (`POST /device/pair`)
+Body: `{code, name, model, android_version, app_version}` plus an **optional** `install_id` (8 to 64 characters of `A-Z a-z 0-9 _ -`, generated once per app install and kept across app updates).
+Pairing again with the same `install_id` reuses the existing device entry: same `device_id`, a new token, and the old token, socket and sessions end.
+Without `install_id` (or with an invalid one) every pairing creates a new entry, as before. The current app does not need to change; sending `install_id` is what stops stale duplicates.
 
 ## Phone -> Hub
 | type | fields | notes |

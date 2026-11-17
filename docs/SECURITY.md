@@ -4,7 +4,8 @@
 - **Constant-time comparison** of the assistant token.
 - **Pairing:** one-time 8-character code, 10-minute expiry, one active code at a time, stored hashed, 8 failed attempts per 10 minutes locks pairing.
 - **Session approval:** commands are refused until the owner approves on the phone. The assistant has no approve tool. Approval window 2 minutes; sessions last 1 to 60 minutes (default 15) and expire server-side by alarm.
-- **Emergency stop:** the phone can end all sessions instantly; the assistant can end or disconnect and optionally revoke (unpair) a device.
+- **Only the phone can approve.** The one place a session becomes active is a `session_decision` frame with `approved: true` from that device's authenticated socket, inside the approval window. The level is fixed when the session is requested and cannot be changed by the phone.
+- **Emergency stop:** the phone can end all sessions instantly; the assistant can end or disconnect and optionally revoke (unpair) a device. `phone_prune_devices` removes stale pairings in bulk (dry run by default; never a connected device).
 - **Capability gating:** a device tool is advertised and callable only if the phone reported that capability; unknown capabilities are dropped.
 - **Input validation** on every tool; terminal commands pass an allowlist and a no-shell-metacharacter rule (the phone must enforce it again).
 - **CORS / Origin:** browser origins limited to `ALLOWED_ORIGINS`; other browser origins get 403 (DNS-rebinding protection). Server-to-server clients without an Origin header are unaffected.
